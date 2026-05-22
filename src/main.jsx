@@ -6,6 +6,7 @@ import {
   Check,
   Download,
   Inbox,
+  KeyRound,
   Loader2,
   LogOut,
   Mail,
@@ -51,8 +52,10 @@ function createDefaultLocalState() {
     runSummary: createDefaultSummary(),
     query: '',
     sender: '',
-    limit: 10,
+    limit: 5,
     protocol: 'imap',
+    codeMode: true,
+    recentMinutes: 30,
     updatedAt: '',
     activeTaskId: '',
     taskSnapshot: createDefaultTask(),
@@ -351,8 +354,10 @@ function App() {
   const [runSummary, setRunSummary] = useState(initialLocalState.runSummary || createDefaultSummary());
   const [query, setQuery] = useState(initialLocalState.query || '');
   const [sender, setSender] = useState(initialLocalState.sender || '');
-  const [limit, setLimit] = useState(Number(initialLocalState.limit) || 10);
+  const [limit, setLimit] = useState(Number(initialLocalState.limit) || 5);
   const [protocol, setProtocol] = useState(initialLocalState.protocol === 'graph' ? 'graph' : 'imap');
+  const [codeMode, setCodeMode] = useState(initialLocalState.codeMode !== false);
+  const [recentMinutes, setRecentMinutes] = useState(Number(initialLocalState.recentMinutes) || 30);
   const [importOpen, setImportOpen] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
   const [localUpdatedAt, setLocalUpdatedAt] = useState(initialLocalState.updatedAt || '');
@@ -382,11 +387,13 @@ function App() {
       sender,
       limit,
       protocol,
+      codeMode,
+      recentMinutes,
       activeTaskId,
       taskSnapshot,
     };
     persistSnapshot(snapshot);
-  }, [accounts, selected, messages, errors, runSummary, query, sender, limit, protocol, activeTaskId, taskSnapshot]);
+  }, [accounts, selected, messages, errors, runSummary, query, sender, limit, protocol, codeMode, recentMinutes, activeTaskId, taskSnapshot]);
 
   async function loadAccounts() {
     const result = await api('/api/accounts');
@@ -590,8 +597,10 @@ function App() {
     setRunSummary(createDefaultSummary());
     setQuery('');
     setSender('');
-    setLimit(10);
+    setLimit(5);
     setProtocol('imap');
+    setCodeMode(true);
+    setRecentMinutes(30);
     setLocalUpdatedAt('');
     setActiveTaskId('');
     setTaskSnapshot(createDefaultTask());
@@ -642,6 +651,8 @@ function App() {
           query,
           sender,
           limit,
+          codeMode,
+          recentMinutes,
         }),
       });
       applyTaskSnapshot(result.task);
@@ -680,7 +691,7 @@ function App() {
         </div>
         <div>
           <h1>Outlook Fast Mail</h1>
-          <p>IMAP OAuth2 + Graph API 双协议收件</p>
+          <p>验证码优先的 Outlook 快速收件工具</p>
           {taskDetail && <small className="topbar-note">{taskDetail}</small>}
         </div>
         <div className={statusTone ? `status-pill ${statusTone}` : 'status-pill'}>
@@ -763,15 +774,22 @@ function App() {
           <section className="controls">
             <div className="search-wrap">
               <Search size={22} />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="关键词，例如 OpenAI" />
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="关键词，例如 OpenAI / GitHub（可选）" />
             </div>
             <div className="sender-wrap">
               <User size={20} />
               <input value={sender} onChange={(event) => setSender(event.target.value)} placeholder="发件人筛选（可选）" />
             </div>
             <select className="limit-select" value={limit} onChange={(event) => setLimit(Number(event.target.value))}>
-              {[5, 10, 20, 50].map((item) => <option key={item} value={item}>{item} 封</option>)}
+              {[3, 5, 10, 20].map((item) => <option key={item} value={item}>{item} 封</option>)}
             </select>
+            <select className="limit-select" value={recentMinutes} onChange={(event) => setRecentMinutes(Number(event.target.value))}>
+              {[5, 10, 30, 60, 120].map((item) => <option key={item} value={item}>近 {item} 分钟</option>)}
+            </select>
+            <label className="code-toggle">
+              <input type="checkbox" checked={codeMode} onChange={(event) => setCodeMode(event.target.checked)} />
+              <span>只看验证码</span>
+            </label>
             <div className="protocol-tabs">
               <button className={protocol === 'imap' ? 'active' : ''} onClick={() => setProtocol('imap')}>IMAP</button>
               <button className={protocol === 'graph' ? 'active' : ''} onClick={() => setProtocol('graph')}>Graph</button>
@@ -815,6 +833,12 @@ function App() {
                     <span className={message.protocol === 'IMAP' ? 'tag imap' : 'tag graph'}>{message.protocol}</span>
                   </div>
                   <h3>{message.subject}</h3>
+                  {message.verificationCode && (
+                    <div className="code-badge">
+                      <KeyRound size={16} />
+                      <span>{message.verificationCode}</span>
+                    </div>
+                  )}
                   <p>{message.preview || '暂无预览内容'}</p>
                   <small>{message.from} | {message.accountEmail}</small>
                 </div>

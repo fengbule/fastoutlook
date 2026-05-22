@@ -358,7 +358,7 @@ input[type="checkbox"] {
 
 .controls {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) 290px 128px;
+  grid-template-columns: minmax(240px, 1fr) 240px 110px 140px 132px;
   gap: 12px;
   align-items: center;
   padding: 22px 28px;
@@ -366,7 +366,8 @@ input[type="checkbox"] {
 
 .search-wrap,
 .sender-wrap,
-.limit-select {
+.limit-select,
+.code-toggle {
   height: 48px;
   display: flex;
   align-items: center;
@@ -395,6 +396,18 @@ input[type="checkbox"] {
   font-weight: 800;
 }
 
+.code-toggle {
+  color: #34445f;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.code-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: #2f6cf4;
+}
+
 .protocol-tabs {
   display: inline-flex;
   gap: 10px;
@@ -416,7 +429,7 @@ input[type="checkbox"] {
 }
 
 .action-row {
-  grid-column: 2 / 4;
+  grid-column: 4 / 6;
   display: flex;
   justify-content: flex-end;
   gap: 12px;
@@ -537,6 +550,22 @@ input[type="checkbox"] {
 .message-card h3 {
   margin: 12px 0 10px;
   font-size: 18px;
+}
+
+.code-badge {
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 9px 14px;
+  border-radius: 10px;
+  color: #075c48;
+  background: linear-gradient(135deg, #dffcef, #c8f7ff);
+  border: 1px solid #a8ead8;
+  font-size: 22px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
 }
 
 .message-card p {

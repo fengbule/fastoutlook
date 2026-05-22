@@ -485,24 +485,62 @@ async function refreshAccessToken(account, protocol) {
   throw lastError;
 }
 
-function mailMatches(mail, query, sender) {
+function extractVerificationCode(...parts) {
+  const text = parts
+    .filter(Boolean)
+    .map((part) => String(part))
+    .join('\n')
+    .replace(/[\u200b-\u200f\u202a-\u202e]/g, ' ');
+
+  const labeledPatterns = [
+    /(?:验证码|校验码|动态码|确认码|安全码|验证代码|verification code|security code|auth(?:entication)? code|login code|one[-\s]?time code|otp)[^\dA-Z]{0,30}([A-Z0-9]{4,10})/i,
+    /([A-Z0-9]{4,10})[^\dA-Z]{0,30}(?:验证码|校验码|动态码|确认码|安全码|verification code|security code|auth(?:entication)? code|login code|one[-\s]?time code|otp)/i,
+  ];
+
+  for (const pattern of labeledPatterns) {
+    const match = text.match(pattern);
+    if (match?.[1] && /\d/.test(match[1])) return match[1].toUpperCase();
+  }
+
+  const fallback = text.match(/(?<![A-Z0-9])([0-9]{4,8}|[A-Z0-9]{6,10})(?![A-Z0-9])/i);
+  return fallback?.[1]?.toUpperCase() || '';
+}
+
+function mailMatches(mail, query, sender, codeMode = false) {
   const q = String(query || '').trim().toLowerCase();
   const s = String(sender || '').trim().toLowerCase();
-  const haystack = `${mail.subject || ''} ${mail.preview || ''} ${mail.from || ''}`.toLowerCase();
+  const haystack = `${mail.subject || ''} ${mail.preview || ''} ${mail.from || ''} ${mail.verificationCode || ''}`.toLowerCase();
+  if (codeMode && !mail.verificationCode && !q && !s) return false;
   if (q && !haystack.includes(q)) return false;
   if (s && !String(mail.from || '').toLowerCase().includes(s)) return false;
   return true;
 }
 
-async function fetchGraphMail(account, { limit, query, sender }) {
+function recentCutoffIso(recentMinutes) {
+  const minutes = Math.max(1, Math.min(Number(recentMinutes) || 30, 1440));
+  return new Date(Date.now() - minutes * 60 * 1000).toISOString();
+}
+
+function isRecentEnough(value, recentMinutes) {
+  const time = new Date(value).getTime();
+  if (!Number.isFinite(time)) return true;
+  return time >= new Date(recentCutoffIso(recentMinutes)).getTime();
+}
+
+async function fetchGraphMail(account, { limit, query, sender, codeMode, recentMinutes }) {
   const accessToken = await refreshAccessToken(account, 'graph');
   const top = Math.max(1, Math.min(Number(limit) || 10, 50));
+  const params = {
+    $top: Math.max(top, codeMode ? top : 25),
+    $orderby: 'receivedDateTime desc',
+    $select: 'id,subject,from,sender,receivedDateTime,bodyPreview',
+  };
+  if (codeMode) {
+    params.$filter = `receivedDateTime ge ${recentCutoffIso(recentMinutes)}`;
+  }
+
   const response = await axios.get('https://graph.microsoft.com/v1.0/me/messages', {
-    params: {
-      $top: Math.max(top, 25),
-      $orderby: 'receivedDateTime desc',
-      $select: 'id,subject,from,sender,receivedDateTime,bodyPreview',
-    },
+    params,
     headers: {
       authorization: `Bearer ${accessToken}`,
       Prefer: 'outlook.body-content-type="text"',
@@ -525,6 +563,7 @@ async function fetchGraphMail(account, { limit, query, sender }) {
         bodyText: '',
       };
 
+      const verificationCode = extractVerificationCode(detail.subject, detail.preview);
       return {
         id: detail.id,
         accountId: detail.accountId,
@@ -535,9 +574,10 @@ async function fetchGraphMail(account, { limit, query, sender }) {
         fromName: detail.fromName,
         receivedAt: detail.receivedAt,
         preview: detail.preview || detail.bodyText.slice(0, 240),
+        verificationCode,
       };
     })
-    .filter((mail) => mailMatches(mail, query, sender))
+    .filter((mail) => mailMatches(mail, query, sender, codeMode))
     .slice(0, top);
 }
 
@@ -552,7 +592,7 @@ function imapEnvelopeDate(message) {
   return date instanceof Date ? date.toISOString() : new Date(date).toISOString();
 }
 
-async function fetchImapMail(account, { limit, query, sender }) {
+async function fetchImapMail(account, { limit, query, sender, codeMode, recentMinutes }) {
   const ImapFlow = getImapFlowClass();
   const accessToken = await refreshAccessToken(account, 'imap');
   const client = new ImapFlow({
@@ -575,12 +615,24 @@ async function fetchImapMail(account, { limit, query, sender }) {
       if (!exists) return [];
 
       const shouldOverfetch = Boolean(String(query || sender || '').trim());
-      const start = Math.max(1, exists - Math.max(top * (shouldOverfetch ? 5 : 2), shouldOverfetch ? 50 : top) + 1);
+      const start = Math.max(1, exists - Math.max(top * (codeMode ? 2 : shouldOverfetch ? 5 : 2), codeMode ? top : shouldOverfetch ? 50 : top) + 1);
       const range = `${start}:*`;
       const mails = [];
 
-      for await (const message of client.fetch(range, { envelope: true, internalDate: true }, { uid: true })) {
+      for await (const message of client.fetch(range, { envelope: true, internalDate: true, source: Boolean(codeMode) }, { uid: true })) {
         const fromItem = message.envelope?.from?.[0] || {};
+        const receivedAt = imapEnvelopeDate(message);
+        if (codeMode && !isRecentEnough(receivedAt, recentMinutes)) continue;
+
+        let preview = '点击查看邮件正文';
+        let verificationCode = '';
+        if (codeMode && message.source) {
+          const parsed = await simpleParser(message.source);
+          const text = buildBodyText(parsed?.text, parsed?.html, '');
+          preview = text.replace(/\s+/g, ' ').slice(0, 240) || preview;
+          verificationCode = extractVerificationCode(message.envelope?.subject, text);
+        }
+
         const mail = {
           id: String(message.uid || message.seq),
           accountId: account.id,
@@ -589,11 +641,12 @@ async function fetchImapMail(account, { limit, query, sender }) {
           subject: message.envelope?.subject || '(No subject)',
           from: formatAddress(fromItem),
           fromName: fromItem.name || '',
-          receivedAt: imapEnvelopeDate(message),
-          preview: '点击查看邮件正文',
+          receivedAt,
+          preview,
+          verificationCode,
         };
 
-        if (mailMatches(mail, query, sender)) {
+        if (mailMatches(mail, query, sender, codeMode)) {
           mails.push(mail);
         }
       }
@@ -794,6 +847,8 @@ function createTask(payload) {
     query: String(payload.query || ''),
     sender: String(payload.sender || ''),
     limit: Number(payload.limit) || 10,
+    codeMode: payload.codeMode !== false,
+    recentMinutes: Math.max(1, Math.min(Number(payload.recentMinutes) || 30, 1440)),
     accountIds: Array.isArray(payload.accountIds) ? payload.accountIds : [],
     totalAccounts: Array.isArray(payload.accountIds) ? payload.accountIds.length : 0,
     processedAccounts: 0,
