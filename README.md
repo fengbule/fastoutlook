@@ -27,18 +27,47 @@ npm run dev
 - 前端：`http://127.0.0.1:5173`
 - 后端：`http://127.0.0.1:3001`
 
+## 一键部署
+
+Linux / macOS：
+
+```bash
+chmod +x deploy.sh
+./deploy.sh
+```
+
+Windows PowerShell：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\deploy.ps1
+```
+
+脚本会自动创建 `.env`、构建 Docker 镜像并后台启动服务。
+
+访问：
+
+```text
+http://127.0.0.1:3001
+```
+
+如果要改端口：
+
+```bash
+PORT=8080 ./deploy.sh
+```
+
+Windows：
+
+```powershell
+$env:PORT=8080; .\deploy.ps1
+```
+
 ## Docker 部署
 
 Docker Compose：
 
 ```bash
 docker compose up -d --build
-```
-
-访问：
-
-```text
-http://127.0.0.1:3001
 ```
 
 数据会保存到 `fastoutlook-data` volume 的 `/app/data` 中。
@@ -94,9 +123,15 @@ email|refresh_token|client_id|client_secret|tenant
 
 ## 环境变量
 
-复制模板：
+一键部署脚本会自动生成 `.env`。手动部署时可复制模板：
 
 ```bash
+cp .env.example .env
+```
+
+Windows：
+
+```powershell
 copy .env.example .env
 ```
 

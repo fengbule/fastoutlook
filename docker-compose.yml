@@ -6,15 +6,14 @@ services:
     ports:
       - "3001:3001"
     environment:
-      PORT: 3001
-      HOST: 0.0.0.0
-      DOCKER: "1"
-      FETCH_CONCURRENCY: 5
-      # Optional OAuth defaults:
-      # MS_CLIENT_ID: ""
-      # MS_CLIENT_SECRET: ""
-      # MS_TENANT: consumers
-      # MS_REDIRECT_URI: http://127.0.0.1:3001/auth/callback
+      PORT: ${PORT:-3001}
+      HOST: ${HOST:-0.0.0.0}
+      DOCKER: ${DOCKER:-1}
+      FETCH_CONCURRENCY: ${FETCH_CONCURRENCY:-5}
+      MS_CLIENT_ID: ${MS_CLIENT_ID:-}
+      MS_CLIENT_SECRET: ${MS_CLIENT_SECRET:-}
+      MS_TENANT: ${MS_TENANT:-consumers}
+      MS_REDIRECT_URI: ${MS_REDIRECT_URI:-http://127.0.0.1:3001/auth/callback}
     volumes:
       - fastoutlook-data:/app/data
 
