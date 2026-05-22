@@ -4,6 +4,7 @@ import {
   AlertCircle,
   ArchiveX,
   Check,
+  Clipboard,
   Download,
   Inbox,
   KeyRound,
@@ -52,7 +53,7 @@ function createDefaultLocalState() {
     runSummary: createDefaultSummary(),
     query: '',
     sender: '',
-    limit: 5,
+    limit: 2,
     protocol: 'imap',
     codeMode: true,
     recentMinutes: 30,
@@ -354,7 +355,7 @@ function App() {
   const [runSummary, setRunSummary] = useState(initialLocalState.runSummary || createDefaultSummary());
   const [query, setQuery] = useState(initialLocalState.query || '');
   const [sender, setSender] = useState(initialLocalState.sender || '');
-  const [limit, setLimit] = useState(Number(initialLocalState.limit) || 5);
+  const [limit, setLimit] = useState(Number(initialLocalState.limit) || 2);
   const [protocol, setProtocol] = useState(initialLocalState.protocol === 'graph' ? 'graph' : 'imap');
   const [codeMode, setCodeMode] = useState(initialLocalState.codeMode !== false);
   const [recentMinutes, setRecentMinutes] = useState(Number(initialLocalState.recentMinutes) || 30);
@@ -366,6 +367,7 @@ function App() {
   const [shuttingDown, setShuttingDown] = useState(false);
   const [activeMessage, setActiveMessage] = useState(null);
   const [messageDetailLoading, setMessageDetailLoading] = useState(false);
+  const [copiedCode, setCopiedCode] = useState('');
   const pollTimeoutRef = useRef(null);
   const messageDetailRequestRef = useRef(0);
 
@@ -523,6 +525,7 @@ function App() {
       ? `当前账号: ${taskSnapshot.currentAccountEmail}`
       : '正在准备任务...')
     : '';
+  const latestCodeMessage = messages.find((message) => message.verificationCode);
 
   function toggleAccount(id) {
     setSelected((current) => {
@@ -539,6 +542,21 @@ function App() {
 
   function dismissError(id) {
     setErrors((current) => current.filter((error) => error.id !== id));
+  }
+
+  async function copyCode(code, event) {
+    event?.stopPropagation?.();
+    if (!code) return;
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopiedCode(code);
+      window.setTimeout(() => setCopiedCode((current) => current === code ? '' : current), 1600);
+    } catch (error) {
+      setErrors((current) => toUiErrors([
+        ...current,
+        { email: '复制验证码', protocol: 'ui', message: error.message || '复制失败，请手动选择验证码。' },
+      ]));
+    }
   }
 
   async function openMessageDetail(message) {
@@ -597,7 +615,7 @@ function App() {
     setRunSummary(createDefaultSummary());
     setQuery('');
     setSender('');
-    setLimit(5);
+    setLimit(2);
     setProtocol('imap');
     setCodeMode(true);
     setRecentMinutes(30);
@@ -781,7 +799,7 @@ function App() {
               <input value={sender} onChange={(event) => setSender(event.target.value)} placeholder="发件人筛选（可选）" />
             </div>
             <select className="limit-select" value={limit} onChange={(event) => setLimit(Number(event.target.value))}>
-              {[3, 5, 10, 20].map((item) => <option key={item} value={item}>{item} 封</option>)}
+              {[1, 2, 3, 5, 10].map((item) => <option key={item} value={item}>{item} 封</option>)}
             </select>
             <select className="limit-select" value={recentMinutes} onChange={(event) => setRecentMinutes(Number(event.target.value))}>
               {[5, 10, 30, 60, 120].map((item) => <option key={item} value={item}>近 {item} 分钟</option>)}
@@ -811,11 +829,19 @@ function App() {
               <Inbox size={24} />
               <strong>结果列表</strong>
             </div>
-            <div className="result-pills">
-              {Object.entries(protocolCounts).map(([key, value]) => (
-                <span key={key} className={key === 'IMAP' ? 'pink' : 'blue'}>{key}: {value}</span>
-              ))}
-              <span className="blue">总计 {messages.length}</span>
+            <div className="result-tools">
+              {latestCodeMessage?.verificationCode && (
+                <button className="copy-latest-btn" onClick={(event) => copyCode(latestCodeMessage.verificationCode, event)}>
+                  <Clipboard size={16} />
+                  {copiedCode === latestCodeMessage.verificationCode ? '已复制' : `复制最新验证码 ${latestCodeMessage.verificationCode}`}
+                </button>
+              )}
+              <div className="result-pills">
+                {Object.entries(protocolCounts).map(([key, value]) => (
+                  <span key={key} className={key === 'IMAP' ? 'pink' : 'blue'}>{key}: {value}</span>
+                ))}
+                <span className="blue">总计 {messages.length}</span>
+              </div>
             </div>
           </section>
 
@@ -834,10 +860,11 @@ function App() {
                   </div>
                   <h3>{message.subject}</h3>
                   {message.verificationCode && (
-                    <div className="code-badge">
+                    <button className="code-badge" onClick={(event) => copyCode(message.verificationCode, event)} title="点击复制验证码">
                       <KeyRound size={16} />
                       <span>{message.verificationCode}</span>
-                    </div>
+                      <small>{copiedCode === message.verificationCode ? '已复制' : '点击复制'}</small>
+                    </button>
                   )}
                   <p>{message.preview || '暂无预览内容'}</p>
                   <small>{message.from} | {message.accountEmail}</small>

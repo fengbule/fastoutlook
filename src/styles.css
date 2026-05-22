@@ -470,6 +470,27 @@ input[type="checkbox"] {
   font-size: 19px;
 }
 
+.result-tools {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.copy-latest-btn {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  border-radius: 999px;
+  color: #075c48;
+  background: #dffcef;
+  border: 1px solid #9ce6cf;
+  font-weight: 950;
+}
+
 .result-pills {
   display: inline-flex;
   flex-wrap: wrap;
@@ -566,6 +587,19 @@ input[type="checkbox"] {
   font-size: 22px;
   font-weight: 950;
   letter-spacing: 0.08em;
+  box-shadow: 0 8px 18px rgba(7, 92, 72, 0.1);
+}
+
+.code-badge:hover,
+.copy-latest-btn:hover {
+  filter: brightness(0.98);
+  transform: translateY(-1px);
+}
+
+.code-badge small {
+  color: #1e806a;
+  font-size: 12px;
+  letter-spacing: 0;
 }
 
 .message-card p {

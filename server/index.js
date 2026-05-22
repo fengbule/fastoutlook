@@ -529,7 +529,7 @@ function isRecentEnough(value, recentMinutes) {
 
 async function fetchGraphMail(account, { limit, query, sender, codeMode, recentMinutes }) {
   const accessToken = await refreshAccessToken(account, 'graph');
-  const top = Math.max(1, Math.min(Number(limit) || 10, 50));
+  const top = Math.max(1, Math.min(Number(limit) || 2, 50));
   const params = {
     $top: Math.max(top, codeMode ? top : 25),
     $orderby: 'receivedDateTime desc',
@@ -548,8 +548,7 @@ async function fetchGraphMail(account, { limit, query, sender, codeMode, recentM
     timeout: 30000,
   });
 
-  return response.data.value
-    .map((item) => {
+  const mails = response.data.value.map((item) => {
       const detail = {
         id: item.id,
         accountId: account.id,
@@ -576,7 +575,22 @@ async function fetchGraphMail(account, { limit, query, sender, codeMode, recentM
         preview: detail.preview || detail.bodyText.slice(0, 240),
         verificationCode,
       };
-    })
+    });
+
+  if (codeMode) {
+    const missingCodeMails = mails.filter((mail) => !mail.verificationCode).slice(0, top);
+    await Promise.all(missingCodeMails.map(async (mail) => {
+      try {
+        const detail = await fetchGraphMessageDetail(account, mail.id);
+        mail.preview = detail.preview || mail.preview;
+        mail.verificationCode = extractVerificationCode(detail.subject, detail.preview, detail.bodyText);
+      } catch {
+        // Keep preview-only result if full-body lookup fails.
+      }
+    }));
+  }
+
+  return mails
     .filter((mail) => mailMatches(mail, query, sender, codeMode))
     .slice(0, top);
 }
@@ -610,7 +624,7 @@ async function fetchImapMail(account, { limit, query, sender, codeMode, recentMi
     await client.connect();
     const lock = await client.getMailboxLock('INBOX');
     try {
-      const top = Math.max(1, Math.min(Number(limit) || 10, 50));
+      const top = Math.max(1, Math.min(Number(limit) || 2, 50));
       const exists = client.mailbox.exists || 0;
       if (!exists) return [];
 
@@ -846,7 +860,7 @@ function createTask(payload) {
     protocol: payload.protocol === 'graph' ? 'graph' : 'imap',
     query: String(payload.query || ''),
     sender: String(payload.sender || ''),
-    limit: Number(payload.limit) || 10,
+    limit: Number(payload.limit) || 2,
     codeMode: payload.codeMode !== false,
     recentMinutes: Math.max(1, Math.min(Number(payload.recentMinutes) || 30, 1440)),
     accountIds: Array.isArray(payload.accountIds) ? payload.accountIds : [],
