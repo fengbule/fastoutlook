@@ -29,6 +29,8 @@ const dataDir = isPackaged
 const storePath = path.join(dataDir, 'store.json');
 const distDir = path.join(rootDir, 'dist');
 const port = Number(process.env.PORT || 3001);
+const host = process.env.HOST || (process.env.DOCKER === '1' ? '0.0.0.0' : '127.0.0.1');
+const fetchConcurrency = Math.max(1, Math.min(Number(process.env.FETCH_CONCURRENCY || 5), 20));
 
 const GRAPH_SCOPES = 'openid offline_access profile email https://graph.microsoft.com/User.Read https://graph.microsoft.com/Mail.Read';
 const GRAPH_REFRESH_SCOPES = 'offline_access https://graph.microsoft.com/User.Read https://graph.microsoft.com/Mail.Read';
@@ -38,8 +40,10 @@ const IMAP_REFRESH_SCOPES = 'offline_access https://outlook.office.com/IMAP.Acce
 const pendingAuth = new Map();
 const fetchTasks = new Map();
 const messageDetailCache = new Map();
+const accessTokenCache = new Map();
 const TASK_RETENTION_LIMIT = 20;
 const MESSAGE_CACHE_LIMIT = 2000;
+const ACCESS_TOKEN_CACHE_SKEW_MS = 60 * 1000;
 let latestTaskId = '';
 let httpServer;
 
@@ -155,6 +159,29 @@ function buildBodyText(text, html, preview = '') {
 
 function makeMessageCacheKey(protocol, accountId, messageId) {
   return `${String(protocol || '').toUpperCase()}:${accountId}:${messageId}`;
+}
+
+function makeAccessTokenCacheKey(protocol, account) {
+  return `${String(protocol || '').toLowerCase()}:${account.id}:${account.refreshToken || account.accessToken || ''}`;
+}
+
+function getCachedAccessToken(protocol, account) {
+  const cached = accessTokenCache.get(makeAccessTokenCacheKey(protocol, account));
+  if (!cached) return '';
+  if (Date.now() + ACCESS_TOKEN_CACHE_SKEW_MS >= cached.expiresAt) {
+    accessTokenCache.delete(makeAccessTokenCacheKey(protocol, account));
+    return '';
+  }
+  return cached.accessToken;
+}
+
+function cacheAccessToken(protocol, account, tokenData = {}) {
+  if (!tokenData.access_token) return;
+  const expiresIn = Math.max(Number(tokenData.expires_in || 3600), 60);
+  accessTokenCache.set(makeAccessTokenCacheKey(protocol, account), {
+    accessToken: tokenData.access_token,
+    expiresAt: Date.now() + expiresIn * 1000,
+  });
 }
 
 function pruneMessageDetailCache() {
@@ -413,6 +440,9 @@ async function refreshAccessToken(account, protocol) {
     return account.accessToken;
   }
 
+  const cached = getCachedAccessToken(protocol, account);
+  if (cached) return cached;
+
   if (!account.refreshToken) {
     throw new Error('这个账号缺少刷新令牌。');
   }
@@ -440,6 +470,7 @@ async function refreshAccessToken(account, protocol) {
         timeout: 30000,
       });
       await saveOAuthState(account, response.data, tenant);
+      cacheAccessToken(protocol, account, response.data);
       return response.data.access_token;
     } catch (error) {
       lastError = error;
@@ -470,7 +501,7 @@ async function fetchGraphMail(account, { limit, query, sender }) {
     params: {
       $top: Math.max(top, 25),
       $orderby: 'receivedDateTime desc',
-      $select: 'id,subject,from,sender,receivedDateTime,bodyPreview,body',
+      $select: 'id,subject,from,sender,receivedDateTime,bodyPreview',
     },
     headers: {
       authorization: `Bearer ${accessToken}`,
@@ -491,10 +522,9 @@ async function fetchGraphMail(account, { limit, query, sender }) {
         fromName: item.from?.emailAddress?.name || item.sender?.emailAddress?.name || '',
         receivedAt: item.receivedDateTime,
         preview: cleanBodyText(item.bodyPreview || ''),
-        bodyText: buildBodyText(item.body?.content, '', item.bodyPreview),
+        bodyText: '',
       };
 
-      cacheMessageDetail(detail);
       return {
         id: detail.id,
         accountId: detail.accountId,
@@ -509,6 +539,17 @@ async function fetchGraphMail(account, { limit, query, sender }) {
     })
     .filter((mail) => mailMatches(mail, query, sender))
     .slice(0, top);
+}
+
+function formatAddress(address = {}) {
+  const mailbox = address.mailbox || '';
+  const hostName = address.host || '';
+  return mailbox && hostName ? `${mailbox}@${hostName}` : mailbox;
+}
+
+function imapEnvelopeDate(message) {
+  const date = message.internalDate || message.envelope?.date || new Date();
+  return date instanceof Date ? date.toISOString() : new Date(date).toISOString();
 }
 
 async function fetchImapMail(account, { limit, query, sender }) {
@@ -533,41 +574,23 @@ async function fetchImapMail(account, { limit, query, sender }) {
       const exists = client.mailbox.exists || 0;
       if (!exists) return [];
 
-      const start = Math.max(1, exists - Math.max(top * 3, 25) + 1);
+      const shouldOverfetch = Boolean(String(query || sender || '').trim());
+      const start = Math.max(1, exists - Math.max(top * (shouldOverfetch ? 5 : 2), shouldOverfetch ? 50 : top) + 1);
       const range = `${start}:*`;
       const mails = [];
 
-      for await (const message of client.fetch(range, { envelope: true, source: true, internalDate: true }, { uid: true })) {
-        const parsed = message.source ? await simpleParser(message.source) : null;
-        const from = parsed?.from?.value?.[0]?.address || message.envelope?.from?.[0]?.address || '';
-        const fromName = parsed?.from?.value?.[0]?.name || message.envelope?.from?.[0]?.name || '';
-        const bodyText = buildBodyText(parsed?.text, parsed?.html, '');
-        const preview = bodyText.replace(/\s+/g, ' ').slice(0, 240);
-        const detail = {
+      for await (const message of client.fetch(range, { envelope: true, internalDate: true }, { uid: true })) {
+        const fromItem = message.envelope?.from?.[0] || {};
+        const mail = {
           id: String(message.uid || message.seq),
           accountId: account.id,
           accountEmail: account.email,
           protocol: 'IMAP',
-          subject: parsed?.subject || message.envelope?.subject || '(No subject)',
-          from,
-          fromName,
-          receivedAt: (message.internalDate || parsed?.date || new Date()).toISOString(),
-          preview,
-          bodyText,
-        };
-
-        cacheMessageDetail(detail);
-
-        const mail = {
-          id: detail.id,
-          accountId: detail.accountId,
-          accountEmail: detail.accountEmail,
-          protocol: detail.protocol,
-          subject: detail.subject,
-          from: detail.from,
-          fromName: detail.fromName,
-          receivedAt: detail.receivedAt,
-          preview: detail.preview,
+          subject: message.envelope?.subject || '(No subject)',
+          from: formatAddress(fromItem),
+          fromName: fromItem.name || '',
+          receivedAt: imapEnvelopeDate(message),
+          preview: '点击查看邮件正文',
         };
 
         if (mailMatches(mail, query, sender)) {
@@ -680,32 +703,40 @@ async function fetchImapMessageDetail(account, messageId) {
 async function collectMessages(accounts, protocol, options, hooks = {}) {
   const messages = [];
   const errors = [];
+  let cursor = 0;
 
-  for (const account of accounts) {
-    hooks.onAccountStart?.(account);
-    try {
-      const fetched = protocol === 'graph'
-        ? await fetchGraphMail(account, options)
-        : await fetchImapMail(account, options);
+  async function worker() {
+    while (cursor < accounts.length) {
+      const account = accounts[cursor];
+      cursor += 1;
+      hooks.onAccountStart?.(account);
+      try {
+        const fetched = protocol === 'graph'
+          ? await fetchGraphMail(account, options)
+          : await fetchImapMail(account, options);
 
-      messages.push(...fetched);
-      await saveAccountStatus(account.id, { ok: true, protocol, count: fetched.length });
-      hooks.onAccountSuccess?.(account, fetched);
-    } catch (error) {
-      const classified = classifyFetchError(account, protocol, error);
-      errors.push(classified);
-      await saveAccountStatus(account.id, {
-        ok: false,
-        protocol,
-        message: classified.message,
-        hint: classified.hint,
-        code: classified.code,
-      });
-      hooks.onAccountError?.(account, classified);
-    } finally {
-      hooks.onAccountFinish?.(account);
+        messages.push(...fetched);
+        await saveAccountStatus(account.id, { ok: true, protocol, count: fetched.length });
+        hooks.onAccountSuccess?.(account, fetched);
+      } catch (error) {
+        const classified = classifyFetchError(account, protocol, error);
+        errors.push(classified);
+        await saveAccountStatus(account.id, {
+          ok: false,
+          protocol,
+          message: classified.message,
+          hint: classified.hint,
+          code: classified.code,
+        });
+        hooks.onAccountError?.(account, classified);
+      } finally {
+        hooks.onAccountFinish?.(account);
+      }
     }
   }
+
+  const workerCount = Math.min(fetchConcurrency, accounts.length || 1);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
   messages.sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime());
   return { messages, errors, total: messages.length };
@@ -1042,9 +1073,10 @@ if (existsSync(distDir)) {
   });
 }
 
-httpServer = app.listen(port, '127.0.0.1', () => {
-  const url = `http://127.0.0.1:${port}`;
-  console.log(`API listening on ${url}`);
+httpServer = app.listen(port, host, () => {
+  const browserHost = host === '0.0.0.0' ? '127.0.0.1' : host;
+  const url = `http://${browserHost}:${port}`;
+  console.log(`API listening on ${host}:${port}`);
   console.log(`Data directory: ${dataDir}`);
   maybeOpenBrowser(url);
 });

@@ -8,7 +8,10 @@
 - `IMAP OAuth2` / `Microsoft Graph`
 - 关键词和发件人筛选
 - 后台抓取，刷新页面不中断
+- 快速刷新：列表只抓取轻量邮件头，正文点击后按需加载
+- 多账号并发抓取，可通过 `FETCH_CONCURRENCY` 调整并发数
 - 点击查看邮件正文
+- Docker / Docker Compose 部署
 - 打包为单文件 `exe`
 
 ## 开发启动
@@ -22,6 +25,35 @@ npm run dev
 
 - 前端：`http://127.0.0.1:5173`
 - 后端：`http://127.0.0.1:3001`
+
+## Docker 部署
+
+Docker Compose：
+
+```bash
+docker compose up -d --build
+```
+
+访问：
+
+```text
+http://127.0.0.1:3001
+```
+
+数据会保存到 `fastoutlook-data` volume 的 `/app/data` 中。
+
+单独使用 Docker：
+
+```bash
+docker build -t fastoutlook .
+docker run -d --name fastoutlook \
+  -p 3001:3001 \
+  -e DOCKER=1 \
+  -e HOST=0.0.0.0 \
+  -e FETCH_CONCURRENCY=5 \
+  -v fastoutlook-data:/app/data \
+  fastoutlook
+```
 
 ## 打包 EXE
 
@@ -58,6 +90,8 @@ copy .env.example .env
 
 常用项：
 
+- `HOST`：监听地址，本地默认 `127.0.0.1`，Docker 默认 `0.0.0.0`
+- `FETCH_CONCURRENCY`：多账号抓取并发数，默认 `5`，最大 `20`
 - `MS_CLIENT_ID`
 - `MS_CLIENT_SECRET`
 - `MS_TENANT`

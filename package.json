@@ -9,8 +9,8 @@
     "dev:api": "node server/index.js",
     "dev:web": "vite --host 127.0.0.1",
     "build": "vite build",
-    "build:server": "node_modules\\.bin\\esbuild.cmd server/index.js --platform=node --format=cjs --target=node18 --outfile=build/server.cjs",
-    "build:exe": "npm.cmd run build && npm.cmd run build:server && node_modules\\.bin\\pkg.cmd . --targets node18-win-x64 --output release/OutlookFastMail.exe",
+    "build:server": "esbuild server/index.js --platform=node --format=cjs --target=node18 --outfile=build/server.cjs",
+    "build:exe": "npm run build && npm run build:server && pkg . --targets node18-win-x64 --output release/OutlookFastMail.exe",
     "start": "node server/index.js",
     "lint": "node --check server/index.js"
   },

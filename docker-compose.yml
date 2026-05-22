@@ -1,0 +1,22 @@
+services:
+  fastoutlook:
+    build: .
+    container_name: fastoutlook
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      PORT: 3001
+      HOST: 0.0.0.0
+      DOCKER: "1"
+      FETCH_CONCURRENCY: 5
+      # Optional OAuth defaults:
+      # MS_CLIENT_ID: ""
+      # MS_CLIENT_SECRET: ""
+      # MS_TENANT: consumers
+      # MS_REDIRECT_URI: http://127.0.0.1:3001/auth/callback
+    volumes:
+      - fastoutlook-data:/app/data
+
+volumes:
+  fastoutlook-data:
